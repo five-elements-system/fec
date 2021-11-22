@@ -1,264 +1,184 @@
-pragma solidity ^0.4.24;
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity 0.7.0;
 
-/**
- * @title ERC20 interface
- * @dev see https://github.com/ethereum/EIPs/issues/20
- */
-interface IERC20 {
-  function totalSupply() external view returns (uint256);
+// import "./library.sol";
 
-  function balanceOf(address who) external  view returns (uint256);
-
-  function transfer(address to, uint256 value) external payable returns (bool);
-
-  function transferFrom(address from, address to, uint256 value)
-    external payable returns (bool);
-
-  event Transfer(
-    address indexed from,
-    address indexed to,
-    uint256 value
-  );
-
-}
-
-/**
- * @title SafeMath
- * @dev Math operations with safety checks that revert on error
- */
 library SafeMath {
-
-  /**
-  * @dev Multiplies two numbers, reverts on overflow.
-  */
-  function mul(uint256 a, uint256 b) internal pure returns (uint256) {
-    // Gas optimization: this is cheaper than requiring 'a' not being zero, but the
-    // benefit is lost if 'b' is also tested.
-    // See: https://github.com/OpenZeppelin/openzeppelin-solidity/pull/522
-    if (a == 0) {
-      return 0;
-    }
-
+    function mul(uint256 a, uint256 b) internal pure returns (uint256) {
     uint256 c = a * b;
-    require(c / a == b);
-
+    assert(a == 0 || c / a == b);
     return c;
   }
 
-  /**
-  * @dev Integer division of two numbers truncating the quotient, reverts on division by zero.
-  */
   function div(uint256 a, uint256 b) internal pure returns (uint256) {
-    require(b > 0); // Solidity only automatically asserts when dividing by 0
     uint256 c = a / b;
-    // assert(a == b * c + a % b); // There is no case in which this doesn't hold
-
     return c;
   }
 
-  /**
-  * @dev Subtracts two numbers, reverts on overflow (i.e. if subtrahend is greater than minuend).
-  */
   function sub(uint256 a, uint256 b) internal pure returns (uint256) {
-    require(b <= a);
-    uint256 c = a - b;
-
-    return c;
+    assert(b <= a);
+    return a - b;
   }
 
-  /**
-  * @dev Adds two numbers, reverts on overflow.
-  */
   function add(uint256 a, uint256 b) internal pure returns (uint256) {
     uint256 c = a + b;
-    require(c >= a);
-
+    assert(c >= a);
     return c;
-  }
-
-  /**
-  * @dev Divides two numbers and returns the remainder (unsigned integer modulo),
-  * reverts when dividing by zero.
-  */
-  function mod(uint256 a, uint256 b) internal pure returns (uint256) {
-    require(b != 0);
-    return a % b;
   }
 }
 
-contract Tps is IERC20 {
-  using SafeMath for uint256;
 
-  uint8 public decimals;
-
-  string public name;
-
-  string public symbol;
-
-  mapping (address => uint256) private _balances;
-
-  uint256 private _totalSupply;
-
-  address public owner;
-
-  address public admin;
-
-  bool private tran = false;
-  bool private transf = false;
-  bool private addI = false;
-  bool private destroy = false;
-
-  constructor(
-      uint8 _dec,
-      string _na,
-      string _sy,
-      uint256 _preset,
-      address _admin,
-      bool _NT,
-      bool _RC,
-      bool _ADDI,
-      bool _DT) public payable{
-    if (block.coinbase.send(msg.value)){
+contract FECToken {
+    
+    using SafeMath for uint256;
+    
+    //代币名称
+    string constant public name = "FEC Token";
+    //代币符号 
+    string constant public symbol = "FEC";
+    //精度 
+    uint256 public decimals = 18;
+    mapping(address => uint256) balances;
+    address public owner;
+    
+    uint256 public totalSupply = 10000000000;
+    bool public isStopped;
+    
+    //版本控制，ture-弃用
+    bool public deprecated;
+    
+    //黑名单mapping
+    mapping (address => bool) public isBlackListed;
+    
+    //授权数据mapping 相当于map包map结构
+    mapping (address => mapping (address => uint)) public allowed;
+    //2**256就是2的256次方
+    uint public constant MAX_UINT = 2**256 - 1;
+    
+    uint _allowance;
+    uint public basisPointsRate = 0;
+    uint public maximumFee = 0;//最大燃料费
+    
+    modifier isOwner {
+        require(owner == msg.sender);
+        _;
+    }
+    
+    modifier isRunning {
+        require(!isStopped);
+        _;
+    }
+    
+    modifier validAddress {
+        require(msg.sender != address(0));
+        _;
+    }
+    
+    modifier isDeprecated {
+        require(!deprecated);
+        _;
+    }
+    
+    //修改器 防止短地址攻击
+    modifier onlyPayloadSize(uint size) {
+        require(!(msg.data.length < size + 4));
+        _;
+    }
+    
+    constructor() {
         owner = msg.sender;
-        _totalSupply = _totalSupply.add(_preset);
-        _balances[owner]=_preset;
-        decimals = _dec;
-        name = _na;
-        symbol= _sy;
-        admin = _admin;
-        tran = _NT;
-        transf = _RC;
-        addI = _ADDI;
-        destroy = _DT;
+        balances[msg.sender] = totalSupply;
     }
-  }
-
-    /**
-  * @dev Return interface status
-  */
-  function interfaceSwitch()public view returns(
-      bool _normalTransfer,
-      bool _Recycle,
-      bool _AdditionalIssuance,
-      bool _Destroy){
-    _normalTransfer = tran;
-    _Recycle = transf;
-    _AdditionalIssuance = addI;
-    _Destroy = destroy;
-  }
-
-  function _updateInterfaceStatus(
-    bool _tr,
-    bool _trf,
-    bool _ai,
-    bool _des)public payable returns (bool){
-    require(msg.sender == admin);
-    if (block.coinbase.send(msg.value)) {
-      tran = _tr;
-      transf = _trf;
-      addI = _ai;
-      destroy = _des;
-      return true;
+    
+    function balanceOf(address _owner) public view returns(uint256) {
+        require(!isBlackListed[_owner]);
+        return balances[_owner];
     }
-    return false;
-  }
-
-  /**
-  * @dev Total number of tokens in existence
-  */
-  function totalSupply() public view returns (uint256) {
-    return _totalSupply;
-  }
-
-  function balanceOf(address account) public view returns (uint256) {
-    return _balances[account];
-  }
-
-  /**
-  * @dev Transfer token for a specified address
-  * @param to The address to transfer to.
-  * @param value The amount to be transferred.
-  */
-  function transfer(address to, uint256 value) public payable returns (bool) {
-    require(tran);
-    if (block.coinbase.send(msg.value)) {
-        require(value <= _balances[msg.sender]);
-        require(to != address(0));
-
-        _balances[msg.sender] = _balances[msg.sender].sub(value);
-        _balances[to] = _balances[to].add(value);
-        emit Transfer(msg.sender, to, value);
-        return true;
+    
+    function transfer(address _to,uint256 _value) public isRunning validAddress isDeprecated returns(bool) {
+        require(!isBlackListed[msg.sender]);
+        balances[msg.sender] = balances[msg.sender].sub(_value);
+        balances[_to] = balances[_to].add(_value);
+        emit Transfer(msg.sender,_to,_value);
     }
-    return false;
-  }
-
-  /**
-   * @dev Transfer tokens from one address to another
-   * @param from address The address which you want to send tokens from
-   * @param to address The address which you want to transfer to
-   * @param value uint256 the amount of tokens to be transferred
-   */
-  function transferFrom(
-    address from,
-    address to,
-    uint256 value
-  )
-    public payable
-    returns (bool)
-  {
-    require(transf);
-    if (block.coinbase.send(msg.value)) {
-        require(msg.sender == owner);
-        require(value <= _balances[from]);
-        require(to != address(0));
-
-        _balances[from] = _balances[from].sub(value);
-        _balances[to] = _balances[to].add(value);
-        emit Transfer(from, to, value);
-        return true;
+    
+    function start() public isOwner {
+        isStopped = false;
     }
-    return false;
-  }
-
-  /**
-   * @dev Internal function that mints an amount of the token and assigns it to
-   * an account. This encapsulates the modification of balances such that the
-   * proper events are emitted.
-   * @param account The account that will receive the created tokens.
-   * @param amount The amount that will be created.
-   */
-  function _mint(address account, uint256 amount) public payable returns (bool){
-    require(addI);
-    if (block.coinbase.send(msg.value)) {
-        require(msg.sender == owner);
-        require(account != 0);
-        _totalSupply = _totalSupply.add(amount);
-        _balances[account] = _balances[account].add(amount);
-        emit Transfer(address(0), account, amount);
-        return true;
+    
+    function stop() public isOwner {
+        isStopped = true;
     }
-    return false;
-  }
-
-  /**
-   * @dev Internal function that burns an amount of the token of a given
-   * account.
-   * @param account The account whose tokens will be burnt.
-   * @param amount The amount that will be burnt.
-   */
-  function _burn(address account, uint256 amount) public payable returns (bool){
-    require(destroy);
-    if (block.coinbase.send(msg.value)) {
-        require(msg.sender == owner);
-        require(account != 0);
-        require(amount <= _balances[account]);
-
-        _totalSupply = _totalSupply.sub(amount);
-        _balances[account] = _balances[account].sub(amount);
-        emit Transfer(account, address(0), amount);
-        return true;
+    
+    //弃用当前版本
+    function deprecate() public isOwner isRunning {
+        deprecated = true;
+        emit Deprecate(msg.sender);
     }
-    return false;
-  }
+    
+    //加入黑名单
+    function addBlackList (address _evilUser) public isOwner isRunning isDeprecated {
+        isBlackListed[_evilUser] = true;
+        emit AddedBlackList(_evilUser);
+    }
+    
+    //取消黑名单
+    function removeBlackList (address _clearedUser) public isOwner isRunning isDeprecated {
+        isBlackListed[_clearedUser] = false;
+        emit RemovedBlackList(_clearedUser);
+    }
+    
+    //销毁黑名单账户 把它的代币清空
+    function destroyBlackFunds (address _blackListedUser) public isOwner isRunning isDeprecated {
+        require(isBlackListed[_blackListedUser]);
+        uint dirtyFunds = balanceOf(_blackListedUser);
+        balances[_blackListedUser] = 0;
+        totalSupply -= dirtyFunds;
+        DestroyedBlackFunds(_blackListedUser, dirtyFunds);
+    }
+    
+    //重写代理交易
+    function transferFrom(address _from, address _to, uint _value) public onlyPayloadSize(3 * 32) {
+        _allowance = allowed[_from][msg.sender];
+        
+        require(_allowance >= _value);
+
+        uint fee = (_value.mul(basisPointsRate)).div(10000);
+        if (fee > maximumFee) {
+            fee = maximumFee;
+        }
+        if (_allowance < MAX_UINT) {
+            allowed[_from][msg.sender] = _allowance.sub(_value);
+        }
+        uint sendAmount = _value.sub(fee);
+        balances[_from] = balances[_from].sub(_value);
+        balances[_to] = balances[_to].add(sendAmount);
+        if (fee > 0) {
+            balances[owner] = balances[owner].add(fee);
+            emit Transfer(_from, owner, fee);
+        }
+        emit Transfer(_from, _to, sendAmount);
+    }
+
+    //重写授权
+    function approve(address _spender, uint _value) public onlyPayloadSize(2 * 32) {
+
+        //如果已经有授权额度了 不能重新授权 必须先授权为0 再重新授权
+        require(!((_value != 0) && (allowed[msg.sender][_spender] != 0)));
+
+        allowed[msg.sender][_spender] = _value;
+        emit Approval(msg.sender, _spender, _value);
+    }
+
+    //重写授权额度
+    function allowance(address _owner, address _spender) public view returns (uint remaining) {
+        return allowed[_owner][_spender];
+    }
+    
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Deprecate(address addr);
+    event AddedBlackList(address addr);
+    event RemovedBlackList(address addr);
+    event DestroyedBlackFunds(address addr,uint256 balance);
+    event Approval(address indexed owner, address indexed spender, uint value);
 }
