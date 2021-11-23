@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.7.0;
 
-// import "./library.sol";
-
 library SafeMath {
     function mul(uint256 a, uint256 b) internal pure returns (uint256) {
     uint256 c = a * b;
@@ -40,24 +38,20 @@ contract FECToken {
     uint256 public decimals = 18;
     mapping(address => uint256) balances;
     address public owner;
-    
-    uint256 public totalSupply = 10000000000;
+    //供应量
+    uint256 public totalSupply = 10000000000 * 10 ** 18;
+    //是否停用
     bool public isStopped;
     
     //版本控制，ture-弃用
-    bool public deprecated;
+    bool public deprecated = false;
     
     //黑名单mapping
     mapping (address => bool) public isBlackListed;
     
     //授权数据mapping 相当于map包map结构
     mapping (address => mapping (address => uint)) public allowed;
-    //2**256就是2的256次方
-    uint public constant MAX_UINT = 2**256 - 1;
-    
-    uint _allowance;
-    uint public basisPointsRate = 0;
-    uint public maximumFee = 0;//最大燃料费
+
     
     modifier isOwner {
         require(owner == msg.sender);
@@ -91,26 +85,32 @@ contract FECToken {
     }
     
     function balanceOf(address _owner) public view returns(uint256) {
-        require(!isBlackListed[_owner]);
+        require(!isBlackListed[_owner],"in blackListed");
         return balances[_owner];
     }
     
     function transfer(address _to,uint256 _value) public isRunning validAddress isDeprecated returns(bool) {
         require(!isBlackListed[msg.sender]);
+        require(!isBlackListed[_to]);
+        require(_to != address(0));
         balances[msg.sender] = balances[msg.sender].sub(_value);
         balances[_to] = balances[_to].add(_value);
         emit Transfer(msg.sender,_to,_value);
     }
     
-    function start() public isOwner {
+    //开启
+    function start() public isOwner isDeprecated {
         isStopped = false;
+        emit Start();
     }
     
-    function stop() public isOwner {
+    //暂停
+    function stop() public isOwner isDeprecated {
         isStopped = true;
+        emit Stop();
     }
     
-    //弃用当前版本
+    //弃用
     function deprecate() public isOwner isRunning {
         deprecated = true;
         emit Deprecate(msg.sender);
@@ -128,46 +128,29 @@ contract FECToken {
         emit RemovedBlackList(_clearedUser);
     }
     
-    //销毁黑名单账户 把它的代币清空
-    function destroyBlackFunds (address _blackListedUser) public isOwner isRunning isDeprecated {
-        require(isBlackListed[_blackListedUser]);
-        uint dirtyFunds = balanceOf(_blackListedUser);
-        balances[_blackListedUser] = 0;
-        totalSupply -= dirtyFunds;
-        DestroyedBlackFunds(_blackListedUser, dirtyFunds);
-    }
-    
     //重写代理交易
-    function transferFrom(address _from, address _to, uint _value) public onlyPayloadSize(3 * 32) {
-        _allowance = allowed[_from][msg.sender];
-        
+    function transferFrom(address _from, address _to, uint _value) public isRunning isDeprecated onlyPayloadSize(3 * 32) {
+        uint _allowance = allowed[_from][msg.sender];
         require(_allowance >= _value);
+        
+        require(!isBlackListed[_from]);
+        require(!isBlackListed[_to]);
+        require(!isBlackListed[msg.sender]);
 
-        uint fee = (_value.mul(basisPointsRate)).div(10000);
-        if (fee > maximumFee) {
-            fee = maximumFee;
-        }
-        if (_allowance < MAX_UINT) {
-            allowed[_from][msg.sender] = _allowance.sub(_value);
-        }
-        uint sendAmount = _value.sub(fee);
         balances[_from] = balances[_from].sub(_value);
-        balances[_to] = balances[_to].add(sendAmount);
-        if (fee > 0) {
-            balances[owner] = balances[owner].add(fee);
-            emit Transfer(_from, owner, fee);
-        }
-        emit Transfer(_from, _to, sendAmount);
+        balances[_to] = balances[_to].add(_value);
+        emit Transfer(_from, _to, _value);
     }
 
     //重写授权
-    function approve(address _spender, uint _value) public onlyPayloadSize(2 * 32) {
+    function approve(address _spender, uint _value) public onlyPayloadSize(2 * 32) returns(bool) {
 
         //如果已经有授权额度了 不能重新授权 必须先授权为0 再重新授权
         require(!((_value != 0) && (allowed[msg.sender][_spender] != 0)));
 
         allowed[msg.sender][_spender] = _value;
         emit Approval(msg.sender, _spender, _value);
+        return true;
     }
 
     //重写授权额度
@@ -179,6 +162,7 @@ contract FECToken {
     event Deprecate(address addr);
     event AddedBlackList(address addr);
     event RemovedBlackList(address addr);
-    event DestroyedBlackFunds(address addr,uint256 balance);
     event Approval(address indexed owner, address indexed spender, uint value);
+    event Start();
+    event Stop();
 }
