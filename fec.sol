@@ -1,56 +1,37 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity 0.7.0;
+pragma solidity 0.8.0;
 
-library SafeMath {
-    function mul(uint256 a, uint256 b) internal pure returns (uint256) {
-    uint256 c = a * b;
-    assert(a == 0 || c / a == b);
-    return c;
-  }
-
-  function div(uint256 a, uint256 b) internal pure returns (uint256) {
-    uint256 c = a / b;
-    return c;
-  }
-
-  function sub(uint256 a, uint256 b) internal pure returns (uint256) {
-    assert(b <= a);
-    return a - b;
-  }
-
-  function add(uint256 a, uint256 b) internal pure returns (uint256) {
-    uint256 c = a + b;
-    assert(c >= a);
-    return c;
-  }
-}
+import "../../openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import "../../openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import "../../openzeppelin-contracts/contracts/utils/Context.sol";
+import "../../openzeppelin-contracts/contracts/utils/math/SafeMath.sol";
 
 
-contract FECToken {
+contract FECToken is Context, IERC20, IERC20Metadata {
     
     using SafeMath for uint256;
     
     //代币名称
-    string constant public name = "FEC Token";
+    string constant private _name = "FEC Token";
     //代币符号 
-    string constant public symbol = "FEC";
+    string constant private _symbol = "FEC";
     //精度 
-    uint256 public decimals = 18;
+    uint8 private _decimals = 18;
     mapping(address => uint256) balances;
-    address public owner;
+    address private owner;
     //供应量
-    uint256 public totalSupply = 10000000000 * 10 ** 18;
+    uint256 private _totalSupply = 10000000000 * 10 ** 18;
     //是否停用
-    bool public isStopped;
+    bool private isStopped;
     
     //版本控制，ture-弃用
-    bool public deprecated = false;
+    bool private deprecated = false;
     
     //黑名单mapping
     mapping (address => bool) public isBlackListed;
     
     //授权数据mapping 相当于map包map结构
-    mapping (address => mapping (address => uint)) public allowed;
+    mapping (address => mapping (address => uint)) public _allowances;
 
     
     modifier isOwner {
@@ -81,21 +62,22 @@ contract FECToken {
     
     constructor() {
         owner = msg.sender;
-        balances[msg.sender] = totalSupply;
+        balances[msg.sender] = _totalSupply;
     }
     
-    function balanceOf(address _owner) public view returns(uint256) {
+    function balanceOf(address _owner) override public view returns(uint256) {
         require(!isBlackListed[_owner],"in blackListed");
         return balances[_owner];
     }
     
-    function transfer(address _to,uint256 _value) public isRunning validAddress isDeprecated returns(bool) {
+    function transfer(address _to,uint256 _value) override public isRunning validAddress isDeprecated returns(bool) {
         require(!isBlackListed[msg.sender]);
         require(!isBlackListed[_to]);
         require(_to != address(0));
         balances[msg.sender] = balances[msg.sender].sub(_value);
         balances[_to] = balances[_to].add(_value);
         emit Transfer(msg.sender,_to,_value);
+        return true;
     }
     
     //开启
@@ -129,8 +111,8 @@ contract FECToken {
     }
     
     //重写代理交易
-    function transferFrom(address _from, address _to, uint _value) public isRunning isDeprecated onlyPayloadSize(3 * 32) {
-        uint _allowance = allowed[_from][msg.sender];
+    function transferFrom(address _from, address _to, uint _value) override public isRunning isDeprecated onlyPayloadSize(3 * 32) returns(bool) {
+        uint _allowance = _allowances[_from][msg.sender];
         require(_allowance >= _value);
         
         require(!isBlackListed[_from]);
@@ -140,29 +122,46 @@ contract FECToken {
         balances[_from] = balances[_from].sub(_value);
         balances[_to] = balances[_to].add(_value);
         emit Transfer(_from, _to, _value);
+        return true;
     }
 
     //重写授权
-    function approve(address _spender, uint _value) public onlyPayloadSize(2 * 32) returns(bool) {
+    function approve(address _spender, uint _value) override public onlyPayloadSize(2 * 32) returns(bool) {
 
         //如果已经有授权额度了 不能重新授权 必须先授权为0 再重新授权
-        require(!((_value != 0) && (allowed[msg.sender][_spender] != 0)));
+        require(!((_value != 0) && (_allowances[msg.sender][_spender] != 0)));
 
-        allowed[msg.sender][_spender] = _value;
+        _allowances[msg.sender][_spender] = _value;
         emit Approval(msg.sender, _spender, _value);
         return true;
     }
 
     //重写授权额度
-    function allowance(address _owner, address _spender) public view returns (uint remaining) {
-        return allowed[_owner][_spender];
+    function allowance(address _owner, address _spender) override public view returns (uint remaining) {
+        return _allowances[_owner][_spender];
     }
     
-    event Transfer(address indexed from, address indexed to, uint256 value);
+    function name() public view virtual override returns (string memory) {
+        return _name;
+    }
+
+    function symbol() override public view virtual returns (string memory) {
+        return _symbol;
+    }
+    
+    function decimals() override public view virtual returns (uint8) {
+        return _decimals;
+    }
+    
+    function totalSupply() public view virtual override returns (uint256) {
+        return _totalSupply;
+    }
+    
+    // event Transfer(address indexed from, address indexed to, uint256 value);
     event Deprecate(address addr);
     event AddedBlackList(address addr);
     event RemovedBlackList(address addr);
-    event Approval(address indexed owner, address indexed spender, uint value);
+    // event Approval(address indexed owner, address indexed spender, uint value);
     event Start();
     event Stop();
 }
